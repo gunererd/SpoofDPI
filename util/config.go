@@ -21,6 +21,9 @@ type Config struct {
 	Timeout         int
 	WindowSize      int
 	AllowedPatterns []*regexp.Regexp
+	TimingRandomization bool
+	TimingDelayMin      uint16
+	TimingDelayMax      uint16
 }
 
 var config *Config
@@ -45,6 +48,14 @@ func (c *Config) Load(args *Args) {
 	c.Timeout = int(args.Timeout)
 	c.AllowedPatterns = parseAllowedPattern(args.AllowedPattern)
 	c.WindowSize = int(args.WindowSize)
+	c.TimingRandomization = args.TimingRandomization
+	c.TimingDelayMin = args.TimingDelayMin
+	c.TimingDelayMax = args.TimingDelayMax
+
+	// Add validation
+	if c.TimingDelayMin > c.TimingDelayMax {
+		c.TimingDelayMin = c.TimingDelayMax
+	}
 }
 
 func parseAllowedPattern(patterns StringArray) []*regexp.Regexp {
