@@ -32,6 +32,8 @@ Usage: spoofdpi [options...]
         bypass DPI only on packets matching this regex pattern; can be given multiple times
   -port value
         port (default 8080)
+  -random-timing value
+        enable random timing delays between packet chunks: short, medium, long (default "short")
   -silent
         do not show the banner and server information at start up
   -system-proxy
