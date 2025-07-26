@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net"
 	"regexp"
 	"strconv"
@@ -11,27 +12,101 @@ import (
 	"github.com/xvzc/SpoofDPI/util/log"
 )
 
-type HttpsHandler struct {
-	bufferSize      int
-	protocol        string
-	port            int
-	timeout         int
-	windowsize      int
-	exploit         bool
-	allowedPatterns []*regexp.Regexp
+// HttpsHandlerConfig contains configuration options for HTTPS handler
+type HttpsHandlerConfig struct {
+	// Core settings
+	Timeout         int                  // Connection timeout in milliseconds
+	WindowSize      int                  // Fragmentation window size
+	AllowedPatterns []*regexp.Regexp     // Regex patterns to bypass DPI
+	Exploit         bool                 // Enable DPI bypass exploit
 }
 
-func NewHttpsHandler(timeout int, windowSize int, allowedPatterns []*regexp.Regexp, exploit bool) *HttpsHandler {
-	return &HttpsHandler{
-		bufferSize:      1024,
-		protocol:        "HTTPS",
-		port:            443,
-		timeout:         timeout,
-		windowsize:      windowSize,
-		allowedPatterns: allowedPatterns,
-		exploit:         exploit,
+// DefaultHttpsHandlerConfig returns default configuration
+func DefaultHttpsHandlerConfig() HttpsHandlerConfig {
+	return HttpsHandlerConfig{
+		Timeout:         0,     // No timeout
+		WindowSize:      0,     // Legacy fragmentation
+		AllowedPatterns: nil,   // No pattern filtering
+		Exploit:         true,  // Enable DPI bypass
 	}
 }
+
+// Validate checks if the configuration is valid
+func (c HttpsHandlerConfig) Validate() error {
+	if c.Timeout < 0 {
+		return errors.New("timeout cannot be negative")
+	}
+	
+	if c.WindowSize < 0 {
+		return errors.New("window size cannot be negative")
+	}
+	
+	return nil
+}
+
+type HttpsHandler struct {
+	bufferSize int
+	protocol   string
+	port       int
+	config     HttpsHandlerConfig
+}
+
+// HttpsHandlerOption represents a configuration option for HTTPS handler
+type HttpsHandlerOption func(*HttpsHandlerConfig)
+
+// WithTimeout sets the connection timeout in milliseconds
+func WithTimeout(timeout int) HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.Timeout = timeout
+	}
+}
+
+// WithWindowSize sets the fragmentation window size
+func WithWindowSize(size int) HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.WindowSize = size
+	}
+}
+
+// WithAllowedPatterns sets the regex patterns for DPI bypass
+func WithAllowedPatterns(patterns []*regexp.Regexp) HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.AllowedPatterns = patterns
+	}
+}
+
+// WithExploit enables or disables DPI bypass exploit
+func WithExploit(exploit bool) HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.Exploit = exploit
+	}
+}
+
+
+// NewHttpsHandler creates a new HTTPS handler with functional options
+func NewHttpsHandler(opts ...HttpsHandlerOption) *HttpsHandler {
+	// Start with default configuration
+	config := DefaultHttpsHandlerConfig()
+	
+	// Apply all options
+	for _, opt := range opts {
+		opt(&config)
+	}
+	
+	// Validate final configuration
+	if err := config.Validate(); err != nil {
+		// Use defaults if validation fails
+		config = DefaultHttpsHandlerConfig()
+	}
+	
+	return &HttpsHandler{
+		bufferSize: 1024,
+		protocol:   "HTTPS",
+		port:       443,
+		config:     config,
+	}
+}
+
 
 func (h *HttpsHandler) Serve(ctx context.Context, lConn *net.TCPConn, initPkt *packet.HttpRequest, ip string) {
 	ctx = util.GetCtxWithScope(ctx, h.protocol)
@@ -77,9 +152,9 @@ func (h *HttpsHandler) Serve(ctx context.Context, lConn *net.TCPConn, initPkt *p
 	go h.communicate(ctx, rConn, lConn, initPkt.Domain(), lConn.RemoteAddr().String())
 	go h.communicate(ctx, lConn, rConn, lConn.RemoteAddr().String(), initPkt.Domain())
 
-	if h.exploit {
+	if h.config.Exploit {
 		logger.Debug().Msgf("writing chunked client hello to %s", initPkt.Domain())
-		chunks := splitInChunks(ctx, clientHello, h.windowsize)
+		chunks := splitInChunks(ctx, clientHello, h.config.WindowSize)
 		if _, err := writeChunks(rConn, chunks); err != nil {
 			logger.Debug().Msgf("error writing chunked client hello to %s: %s", initPkt.Domain(), err)
 			return
@@ -106,7 +181,7 @@ func (h *HttpsHandler) communicate(ctx context.Context, from *net.TCPConn, to *n
 
 	buf := make([]byte, h.bufferSize)
 	for {
-		err := setConnectionTimeout(from, h.timeout)
+		err := setConnectionTimeout(from, h.config.Timeout)
 		if err != nil {
 			logger.Debug().Msgf("error while setting connection deadline for %s: %s", fd, err)
 		}

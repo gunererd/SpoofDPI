@@ -109,7 +109,12 @@ func (pxy *Proxy) Start(ctx context.Context) {
 
 			var h Handler
 			if pkt.IsConnectMethod() {
-				h = handler.NewHttpsHandler(pxy.timeout, pxy.windowSize, pxy.allowedPattern, matched)
+				h = handler.NewHttpsHandler(
+					handler.WithTimeout(pxy.timeout),
+					handler.WithWindowSize(pxy.windowSize),
+					handler.WithAllowedPatterns(pxy.allowedPattern),
+					handler.WithExploit(matched),
+				)
 			} else {
 				h = handler.NewHttpHandler(pxy.timeout)
 			}
