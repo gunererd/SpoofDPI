@@ -4,7 +4,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 	"unsafe"
 )
 
@@ -22,9 +24,7 @@ type Args struct {
 	AllowedPattern StringArray
 	WindowSize     uint16
 	Version        bool
-	TimingRandomization bool
-	TimingDelayMin      uint16
-	TimingDelayMax      uint16
+	RandomTiming TimingFlag
 }
 
 type StringArray []string
@@ -37,6 +37,22 @@ func (arr *StringArray) Set(value string) error {
 	*arr = append(*arr, value)
 	return nil
 }
+
+type TimingFlag struct {
+	Value string
+	IsSet bool
+}
+
+func (t *TimingFlag) String() string {
+	return t.Value
+}
+
+func (t *TimingFlag) Set(value string) error {
+	t.Value = value
+	t.IsSet = true
+	return nil
+}
+
 
 func ParseArgs() *Args {
 	args := new(Args)
@@ -62,11 +78,21 @@ fragmentation for the first data packet and the rest
 		"bypass DPI only on packets matching this regex pattern; can be given multiple times",
 	)
 	flag.BoolVar(&args.DnsIPv4Only, "dns-ipv4-only", false, "resolve only version 4 addresses")
-	flag.BoolVar(&args.TimingRandomization, "timing-randomization", false, "enable timing randomization between packet chunks")
-	uintNVar(&args.TimingDelayMin, "timing-delay-min", 5, "minimum delay in milliseconds for timing randomization")
-	uintNVar(&args.TimingDelayMax, "timing-delay-max", 50, "maximum delay in milliseconds for timing randomization")
+	flag.Var(&args.RandomTiming, "random-timing", "enable random timing delays: short, medium, long (defaults to short)")
 
 	flag.Parse()
+	
+	// Handle --random-timing without value (set default to "short")
+	for i, arg := range os.Args {
+		if arg == "--random-timing" || arg == "-random-timing" {
+			// Check if next arg exists and is not a flag
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "-") {
+				args.RandomTiming.Value = "short"
+				args.RandomTiming.IsSet = true
+			}
+			break
+		}
+	}
 
 	return args
 }

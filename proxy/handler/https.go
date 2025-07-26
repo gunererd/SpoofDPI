@@ -51,10 +51,6 @@ func (c HttpsHandlerConfig) Validate() error {
 		return errors.New("window size cannot be negative")
 	}
 
-	if c.TimingRandomization && c.TimingDelayMin > c.TimingDelayMax {
-		return errors.New("timing delay min cannot be greater than max")
-	}
-
 	return nil
 }
 
@@ -149,8 +145,8 @@ func (h *HttpsHandler) randomDelay(ctx context.Context) {
 	delayRange := h.config.TimingDelayMax - h.config.TimingDelayMin
 	delay := h.config.TimingDelayMin + uint16(rand.Intn(int(delayRange)+1))
 
-	// logger := log.GetCtxLogger(ctx)
-	// logger.Debug().Msgf("applying timing delay: %dms", delay)
+	logger := log.GetCtxLogger(ctx)
+	logger.Debug().Msgf("applying timing delay: %dms", delay)
 
 	time.Sleep(time.Duration(delay) * time.Millisecond)
 }
@@ -285,10 +281,11 @@ func splitInChunks(ctx context.Context, bytes []byte, size int) [][]byte {
 }
 
 func (h *HttpsHandler) writeChunks(ctx context.Context, conn *net.TCPConn, c [][]byte) (n int, err error) {
+
 	total := 0
 	for i := 0; i < len(c); i++ {
-		// Add delay before writing chunk (except first chunk)
-		if i > 0 {
+		// Apply delays to 15% of chunks randomly (except first chunk)
+		if i > 0 && h.config.TimingRandomization && rand.Float32() < 0.15 {
 			h.randomDelay(ctx)
 		}
 
