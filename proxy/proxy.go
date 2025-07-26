@@ -24,6 +24,9 @@ type Proxy struct {
 	windowSize     int
 	enableDoh      bool
 	allowedPattern []*regexp.Regexp
+	timingRandomization bool
+	timingDelayMin      uint16
+	timingDelayMax      uint16
 }
 
 type Handler interface {
@@ -38,6 +41,9 @@ func New(config *util.Config) *Proxy {
 		windowSize:     config.WindowSize,
 		enableDoh:      config.EnableDoh,
 		allowedPattern: config.AllowedPatterns,
+		timingRandomization: config.TimingRandomization,
+		timingDelayMin:      config.TimingDelayMin,
+		timingDelayMax:      config.TimingDelayMax,
 		resolver:       dns.NewDns(config),
 	}
 }
@@ -109,12 +115,20 @@ func (pxy *Proxy) Start(ctx context.Context) {
 
 			var h Handler
 			if pkt.IsConnectMethod() {
-				h = handler.NewHttpsHandler(
+				var opts []handler.HttpsHandlerOption
+				opts = append(opts,
 					handler.WithTimeout(pxy.timeout),
 					handler.WithWindowSize(pxy.windowSize),
 					handler.WithAllowedPatterns(pxy.allowedPattern),
 					handler.WithExploit(matched),
 				)
+				
+				// Add timing randomization if enabled
+				if pxy.timingRandomization {
+					opts = append(opts, handler.WithTimingRandomization(pxy.timingDelayMin, pxy.timingDelayMax))
+				}
+				
+				h = handler.NewHttpsHandler(opts...)
 			} else {
 				h = handler.NewHttpHandler(pxy.timeout)
 			}

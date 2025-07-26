@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"net"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/xvzc/SpoofDPI/packet"
 	"github.com/xvzc/SpoofDPI/util"
@@ -15,19 +17,27 @@ import (
 // HttpsHandlerConfig contains configuration options for HTTPS handler
 type HttpsHandlerConfig struct {
 	// Core settings
-	Timeout         int                  // Connection timeout in milliseconds
-	WindowSize      int                  // Fragmentation window size
-	AllowedPatterns []*regexp.Regexp     // Regex patterns to bypass DPI
-	Exploit         bool                 // Enable DPI bypass exploit
+	Timeout         int              // Connection timeout in milliseconds
+	WindowSize      int              // Fragmentation window size
+	AllowedPatterns []*regexp.Regexp // Regex patterns to bypass DPI
+	Exploit         bool             // Enable DPI bypass exploit
+
+	// Timing randomization settings
+	TimingRandomization bool   // Enable timing randomization
+	TimingDelayMin      uint16 // Minimum delay in milliseconds
+	TimingDelayMax      uint16 // Maximum delay in milliseconds
 }
 
 // DefaultHttpsHandlerConfig returns default configuration
 func DefaultHttpsHandlerConfig() HttpsHandlerConfig {
 	return HttpsHandlerConfig{
-		Timeout:         0,     // No timeout
-		WindowSize:      0,     // Legacy fragmentation
-		AllowedPatterns: nil,   // No pattern filtering
-		Exploit:         true,  // Enable DPI bypass
+		Timeout:             0,     // No timeout
+		WindowSize:          0,     // Legacy fragmentation
+		AllowedPatterns:     nil,   // No pattern filtering
+		Exploit:             true,  // Enable DPI bypass
+		TimingRandomization: false, // Disabled by default
+		TimingDelayMin:      5,     // 5ms minimum
+		TimingDelayMax:      50,    // 50ms maximum
 	}
 }
 
@@ -36,11 +46,15 @@ func (c HttpsHandlerConfig) Validate() error {
 	if c.Timeout < 0 {
 		return errors.New("timeout cannot be negative")
 	}
-	
+
 	if c.WindowSize < 0 {
 		return errors.New("window size cannot be negative")
 	}
-	
+
+	if c.TimingRandomization && c.TimingDelayMin > c.TimingDelayMax {
+		return errors.New("timing delay min cannot be greater than max")
+	}
+
 	return nil
 }
 
@@ -82,23 +96,38 @@ func WithExploit(exploit bool) HttpsHandlerOption {
 	}
 }
 
+// WithTimingRandomization enables timing randomization with min/max delays
+func WithTimingRandomization(min, max uint16) HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.TimingRandomization = true
+		c.TimingDelayMin = min
+		c.TimingDelayMax = max
+	}
+}
+
+// WithoutTimingRandomization disables timing randomization
+func WithoutTimingRandomization() HttpsHandlerOption {
+	return func(c *HttpsHandlerConfig) {
+		c.TimingRandomization = false
+	}
+}
 
 // NewHttpsHandler creates a new HTTPS handler with functional options
 func NewHttpsHandler(opts ...HttpsHandlerOption) *HttpsHandler {
 	// Start with default configuration
 	config := DefaultHttpsHandlerConfig()
-	
+
 	// Apply all options
 	for _, opt := range opts {
 		opt(&config)
 	}
-	
+
 	// Validate final configuration
 	if err := config.Validate(); err != nil {
 		// Use defaults if validation fails
 		config = DefaultHttpsHandlerConfig()
 	}
-	
+
 	return &HttpsHandler{
 		bufferSize: 1024,
 		protocol:   "HTTPS",
@@ -107,6 +136,24 @@ func NewHttpsHandler(opts ...HttpsHandlerOption) *HttpsHandler {
 	}
 }
 
+func (h *HttpsHandler) randomDelay(ctx context.Context) {
+	if !h.config.TimingRandomization {
+		return
+	}
+
+	if h.config.TimingDelayMin >= h.config.TimingDelayMax {
+		return
+	}
+
+	// Generate random delay between min and max
+	delayRange := h.config.TimingDelayMax - h.config.TimingDelayMin
+	delay := h.config.TimingDelayMin + uint16(rand.Intn(int(delayRange)+1))
+
+	// logger := log.GetCtxLogger(ctx)
+	// logger.Debug().Msgf("applying timing delay: %dms", delay)
+
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+}
 
 func (h *HttpsHandler) Serve(ctx context.Context, lConn *net.TCPConn, initPkt *packet.HttpRequest, ip string) {
 	ctx = util.GetCtxWithScope(ctx, h.protocol)
@@ -155,7 +202,7 @@ func (h *HttpsHandler) Serve(ctx context.Context, lConn *net.TCPConn, initPkt *p
 	if h.config.Exploit {
 		logger.Debug().Msgf("writing chunked client hello to %s", initPkt.Domain())
 		chunks := splitInChunks(ctx, clientHello, h.config.WindowSize)
-		if _, err := writeChunks(rConn, chunks); err != nil {
+		if _, err := h.writeChunks(ctx, rConn, chunks); err != nil {
 			logger.Debug().Msgf("error writing chunked client hello to %s: %s", initPkt.Domain(), err)
 			return
 		}
@@ -237,12 +284,17 @@ func splitInChunks(ctx context.Context, bytes []byte, size int) [][]byte {
 	return [][]byte{raw[:1], raw[1:]}
 }
 
-func writeChunks(conn *net.TCPConn, c [][]byte) (n int, err error) {
+func (h *HttpsHandler) writeChunks(ctx context.Context, conn *net.TCPConn, c [][]byte) (n int, err error) {
 	total := 0
 	for i := 0; i < len(c); i++ {
+		// Add delay before writing chunk (except first chunk)
+		if i > 0 {
+			h.randomDelay(ctx)
+		}
+
 		b, err := conn.Write(c[i])
 		if err != nil {
-			return 0, nil
+			return 0, err
 		}
 
 		total += b
