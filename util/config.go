@@ -9,18 +9,18 @@ import (
 )
 
 type Config struct {
-	Addr            string
-	Port            int
-	DnsAddr         string
-	DnsPort         int
-	DnsIPv4Only     bool
-	EnableDoh       bool
-	Debug           bool
-	Silent          bool
-	SystemProxy     bool
-	Timeout         int
-	WindowSize      int
-	AllowedPatterns []*regexp.Regexp
+	Addr                string
+	Port                int
+	DnsAddr             string
+	DnsPort             int
+	DnsIPv4Only         bool
+	EnableDoh           bool
+	Debug               bool
+	Silent              bool
+	SystemProxy         bool
+	Timeout             int
+	WindowSize          int
+	AllowedPatterns     []*regexp.Regexp
 	TimingRandomization bool
 	TimingDelayMin      uint16
 	TimingDelayMax      uint16
@@ -48,13 +48,33 @@ func (c *Config) Load(args *Args) {
 	c.Timeout = int(args.Timeout)
 	c.AllowedPatterns = parseAllowedPattern(args.AllowedPattern)
 	c.WindowSize = int(args.WindowSize)
-	c.TimingRandomization = args.TimingRandomization
-	c.TimingDelayMin = args.TimingDelayMin
-	c.TimingDelayMax = args.TimingDelayMax
-
-	// Add validation
-	if c.TimingDelayMin > c.TimingDelayMax {
-		c.TimingDelayMin = c.TimingDelayMax
+	// Handle random timing argument
+	if args.RandomTiming.IsSet {
+		c.TimingRandomization = true
+		// Convert timing delay preset to min/max values
+		preset := args.RandomTiming.Value
+		if preset == "" {
+			preset = "short" // Default when flag is used without value
+		}
+		switch preset {
+		case "short":
+			c.TimingDelayMin = 5
+			c.TimingDelayMax = 25
+		case "medium":
+			c.TimingDelayMin = 25
+			c.TimingDelayMax = 50
+		case "long":
+			c.TimingDelayMin = 50
+			c.TimingDelayMax = 100
+		default:
+			// Default to short for invalid values
+			c.TimingDelayMin = 5
+			c.TimingDelayMax = 25
+		}
+	} else {
+		c.TimingRandomization = false
+		c.TimingDelayMin = 0
+		c.TimingDelayMax = 0
 	}
 }
 
